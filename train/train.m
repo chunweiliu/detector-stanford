@@ -46,10 +46,19 @@ writelob(lobfile, model)
 
 % Find the positive examples and safe them in the data file
 fid = fopen(datfile, 'w');
-num = poswarp(name, model, 1, pos, fid);
+[posdata, posids, numpos] = poswarp(name, model, 1, pos, fid);
 
 % Add random negatives
-num = num + negrandom(name, model, 1, neg, maxnum-num, fid);
+[negdata, negids, numneg] = negrandom(name, model, 1, neg, maxnum-numpos, fid);
+
+data = [posdata negdata]';
+labels = [ones(numpos,1); -ones(numneg,1)];
+ids = [posids; negids];
+datafile = [cachedir name '_data.mat'];
+save(datafile, 'data', 'labels', 'ids');
+
+num = numpos + numneg;
+%num = num + negrandom(name, model, 1, neg, maxnum-num, fid);
 fclose(fid);
         
 % learn model
@@ -85,7 +94,7 @@ save([cachedir name '_model'], 'model');
 
 % get positive examples by warping positive bounding boxes
 % we create virtual examples by flipping each image left to right
-function num = poswarp(name, model, c, pos, fid)
+function [data, ids, num] = poswarp(name, model, c, pos, fid)
 numpos = length(pos);
 warped = warppos(name, model, c, pos);
 ridx = model.components{c}.rootindex;
@@ -98,6 +107,9 @@ width2 = floor(model.rootfilters{ridx}.size(2)/2);
 pixels = model.rootfilters{ridx}.size * model.sbin;
 minsize = prod(pixels);
 num = 0;
+% data for debug
+data = zeros(prod([model.rootfilters{ridx}.size(1) width1 31]), 2*numpos);
+ids = cell(2*numpos, 1);
 for i = 1:numpos
     if mod(i,100)==0
         fprintf('%s: warped positive: %d/%d\n', name, i, numpos);
@@ -112,6 +124,10 @@ for i = 1:numpos
     feat = features(im, model.sbin);
     feat(:,1:width2,:) = feat(:,1:width2,:) + flipfeat(feat(:,width1+1:end,:));
     feat = feat(:,1:width1,:);
+    
+    data(:,1+num) = feat(:);
+    ids(1+num) = {pos(i).id};
+    
     fwrite(fid, [1 2*i-1 0 0 0 2 dim], 'int32');
     fwrite(fid, [oblocklabel 1], 'single');
     fwrite(fid, rblocklabel, 'single');
@@ -120,15 +136,21 @@ for i = 1:numpos
     feat = features(im(:,end:-1:1,:), model.sbin);    
     feat(:,1:width2,:) = feat(:,1:width2,:) + flipfeat(feat(:,width1+1:end,:));
     feat = feat(:,1:width1,:);
+    
+    data(:,2+num) = feat(:);
+    ids(2+num) = {pos(i).id};
+    
     fwrite(fid, [1 2*i 0 0 0 2 dim], 'int32');
     fwrite(fid, [oblocklabel 1], 'single');
     fwrite(fid, rblocklabel, 'single');
     fwrite(fid, feat, 'single');
     num = num+2;    
 end
+data = data(:,1:num);
+ids = ids(1:num);
 
 % get random negative examples
-function num = negrandom(name, model, c, neg, maxnum, fid)
+function [data, ids, num] = negrandom(name, model, c, neg, maxnum, fid)
 numneg = length(neg);
 rndneg = floor(maxnum/numneg);
 ridx = model.components{c}.rootindex;
@@ -140,6 +162,9 @@ width1 = ceil(rsize(2)/2);
 width2 = floor(rsize(2)/2);
 dim = model.components{c}.dim;
 num = 0;
+% data for debug
+data = zeros(prod([model.rootfilters{ridx}.size(1) width1 31]), numneg*rndneg);
+ids = cell(numneg*rndneg,1);
 for i = 1:numneg
   if mod(i,100)==0
     fprintf('%s: random negatives: %d/%d\n', name, i, numneg);
@@ -157,6 +182,9 @@ for i = 1:numneg
       fwrite(fid, [oblocklabel 1], 'single');
       fwrite(fid, rblocklabel, 'single');
       fwrite(fid, f, 'single');
+      
+      data(:,rndneg*(i-1)+j) = f(:);
+      ids(rndneg*(i-1)+j) = {neg(i).id};
     end
     num = num+rndneg;
   end
